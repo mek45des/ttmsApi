@@ -2,10 +2,6 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
-using System.Security.Claims;
-using System.Text.Encodings.Web;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.Extensions.Options;
 
 public class TrainingAuthHandler
     : AuthenticationHandler<AuthenticationSchemeOptions>
@@ -28,8 +24,7 @@ public class TrainingAuthHandler
 
         var claims = new[]
         {
-            new Claim(ClaimTypes.Name,
-                Request.Headers["X-Training-User"]!)
+            new Claim(ClaimTypes.Name, Request.Headers["X-Training-User"]!)
         };
 
         var identity = new ClaimsIdentity(claims, Scheme.Name);
