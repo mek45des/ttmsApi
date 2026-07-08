@@ -1,34 +1,46 @@
 using Microsoft.AspNetCore.Mvc;
+using Tms.Api.Dtos;
+
+using TmsApi.Services;
+namespace Tms.Api.Controllers;
+using TmsApi.Entities;
+
 [ApiController]
-[Route("api/enrollments")]
-public class EnrollmentsController(IEnrollmentService enrollmentService) : ControllerBase
+[Route("api/courses/{courseId:int}/enrollments")]
+public class EnrollmentsController(ICourseService courseService,IEnrollmentService enrollmentService) : ControllerBase
 {
 // GET /api/enrollments returns all enrollment records
-[HttpGet]
-public async Task<IActionResult> GetAll()
+[HttpGet("{id:int}", Name = nameof(GetEnrollment))]
+public async Task<IActionResult> GetEnrollment(int courseId, int id, CancellationToken cancellationToken)
 {
-var enrollments = await enrollmentService.GetAllAsync();
-return Ok(enrollments);
+var enrollment = await enrollmentService.GetByIdAsync(courseId, id, cancellationToken);
+return enrollment is not null ? Ok(enrollment) : NotFound();
 }
-[HttpGet("{id}")]
-public async Task<IActionResult> GetById(string id)
-{
-var record = await enrollmentService.GetByIdAsync(id);
-return record is not null ? Ok(record) : NotFound();
-}
-
 [HttpPost]
-public async Task<IActionResult> Create([FromBody] CreateEnrollmentRequest request)
-{
-var record = await enrollmentService.EnrollAsync(request.StudentId, request.CourseCode);
-return CreatedAtAction(nameof(GetById), new { id = record.Id }, record);
+public async Task<IActionResult> EnrollStudent(int courseId, EnrollStudentRequest request, CancellationToken cancellationToken){
+    var course = await courseService.GetByIdAsync(courseId, cancellationToken);
+
+    if (course==  null)
+    {
+        return NotFound();
+    }
+   var enrollment = await enrollmentService.CreateAsync(courseId, request, cancellationToken);
+    if(course.EnrollmentCount >= course.MaxCapacity)
+        {
+            return Conflict(new ProblemDetails { 
+                Title = "Course is full",
+                Detail = $"Course '{course.Title}' has reached its maximum capacity of {course.MaxCapacity}.",
+                Status = StatusCodes.Status409Conflict });
+        }
+        else
+        {
+           
+            return CreatedAtAction(nameof(GetEnrollment),
+            new { courseId, id = enrollment.Id }, enrollment);
+            throw new NotImplementedException();
+        }
 }
-[HttpDelete("{id}")]
-public async Task<IActionResult> Delete(string id)
-{
-var deleted = await enrollmentService.DeleteAsync(id);
-return deleted ? NoContent() : NotFound();
-}
+  
 
 }
-public record CreateEnrollmentRequest(string StudentId, string CourseCode);
+
