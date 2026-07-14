@@ -37,6 +37,21 @@ EnrollStudentRequest request, CancellationToken cancellationToken)
       return await GetByIdAsync(courseId, enrollment.Id, cancellationToken);
       throw new NotImplementedException();
     }
+    public async Task<List<EnrollmentResponseDto>> GetByCourseAsync(
+    int courseId,
+    CancellationToken ct)
+{
+    return await context.Enrollments
+        .Where(e => e.CourseId == courseId)
+        .Select(e => new EnrollmentResponseDto
+        (
+            e.Id,
+             e.StudentId,
+            e.CourseId,
+            e.EnrolledAt
+        ))
+        .ToListAsync(ct);
+}
 }
 
 

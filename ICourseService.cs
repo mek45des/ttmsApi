@@ -9,5 +9,7 @@ public interface ICourseService
     
     Task<CourseResponseDto?> GetByIdAsync(int id, CancellationToken cancellationToken);
 Task<CourseResponseDto> CreateAsync(CreateCourseRequest request, CancellationToken cancellationToken);
-Task<bool> CodeExistsAsync(string code, CancellationToken ct);
+Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken);
+Task<PagedResponse<CourseResponseDto>> GetCoursesAsync(PagedRequest
+request, CancellationToken ct);
 }
