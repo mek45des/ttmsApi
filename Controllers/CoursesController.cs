@@ -37,14 +37,14 @@ controller:"Enrollments", values: new { courseId = course.Id });
 var links=new List<LinkDto>
 {
   
-    new LinkDto( courseLink,  "self", "GET" ),
-    new LinkDto( courseLink, "update", "PUT" ),
-    new LinkDto( courseLink, "delete", "DELETE" ),
-    new LinkDto( enrollLink, "enrollments",  "GET" )
+    new LinkDto( courseLink!,  "self", "GET" ),
+    new LinkDto( courseLink!, "update", "PUT" ),
+    new LinkDto( courseLink!, "delete", "DELETE" ),
+    new LinkDto( enrollLink!, "enrollments",  "GET" )
 
 };
   if (course.EnrollmentCount<course.MaxCapacity){
-            new LinkDto(enrollLink, "enroll", "POST");
+            new LinkDto(enrollLink!, "enroll", "POST");
         }
         var detailDtos=new CourseDetailDto
         {

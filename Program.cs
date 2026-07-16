@@ -1,3 +1,4 @@
+using Asp.Versioning; 
 using Microsoft.AspNetCore.Authentication;
 using Scalar.AspNetCore;
 using Microsoft.EntityFrameworkCore;
@@ -6,6 +7,7 @@ using TmsApi.Entities;
 using TmsApi.Services;
 using Tms.Api.Persistence;
 using Tms.Api.Filters;
+using TmsApi.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,10 +46,44 @@ builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
-
-
-
+//
+builder.Services.AddOpenApi("v1", options =>
+{
+options.ShouldInclude = description =>
+description.GroupName == "v1";
+});
+builder.Services.AddOpenApi("v2", options =>
+{
+options.ShouldInclude = description =>
+description.GroupName == "v2";
+});
+builder.Services.AddApiVersioning(options =>
+{
+options.DefaultApiVersion = new ApiVersion(1, 0);
+options.AssumeDefaultVersionWhenUnspecified = true;
+options.ReportApiVersions = true;
+options.ApiVersionReader = new UrlSegmentApiVersionReader();
+})
+.AddApiExplorer(options =>
+{
+options.GroupNameFormat = "'v'VVV";
+options.SubstituteApiVersionInUrl = true;
+});
+// update your scalar config
 var app = builder.Build();
+
+ app.MapScalarApiReference(options =>
+{
+options.WithTitle("TMS API Reference")
+.WithTheme(ScalarTheme.DeepSpace)
+.WithDefaultHttpClient(ScalarTarget.CSharp,
+ScalarClient.HttpClient);
+// Tell Scalar to pull both documents into its sidebar dropdown
+options
+.AddDocument("v1", "API Version 1.0")
+.AddDocument("v2", "API Version 2.0");
+});
+
 
 app.UseMiddleware<RequestLoggingMiddleware>();
 
@@ -61,13 +97,14 @@ app.UseRouting();
 app.UseAuthentication();
 
 app.UseAuthorization();
+app.UseMiddleware<V1DeprecationMiddleware>();
 
 app.MapControllers();
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.MapScalarApiReference();
+   // app.MapScalarApiReference();
 }
 
 app.MapGet("/api/error", () =>

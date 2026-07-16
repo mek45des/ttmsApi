@@ -34,7 +34,7 @@ EnrollStudentRequest request, CancellationToken cancellationToken)
     request.StudentId,
     courseId);
 
-      return await GetByIdAsync(courseId, enrollment.Id, cancellationToken);
+      return (await GetByIdAsync(courseId, enrollment.Id, cancellationToken))!;
       throw new NotImplementedException();
     }
     public async Task<List<EnrollmentResponseDto>> GetByCourseAsync(
