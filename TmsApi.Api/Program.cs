@@ -11,15 +11,23 @@ using Tms.Api.Persistence;
 using Tms.Api.Filters;
 using TmsApi.Api.Authentication;
 using TmsApi.Application.Interface;
-
-
-//using Microsoft.AspNetCore.Authentication;
+using TmsApi.Application.Enrollments.Commands;
+using TmsApi.Application.Behaviors;
+using TmsApi.Api.ExceptionHandlers;
+using MediatR;
+using FluentValidation;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+using TmsApi.Api.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
     .AddAuthentication("Training")
     .AddScheme<AuthenticationSchemeOptions, TrainingAuthHandler>("Training", null);
+//
 
 builder.Services.AddAuthorization();
 builder.Services.AddDbContext<TmsDbContext>(options =>
@@ -34,12 +42,31 @@ builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
 builder.Services.AddSingleton<EnrollmentWorker>();
 builder.Services.AddScoped<IStudentService, StudentService>();
 builder.Services.AddScoped<ICourseService, CourseService>();
+builder.Services.AddScoped<ICachedCourseService, CachedCourseService>();
+builder.Services.AddScoped<IGradeService,GradeService>();
 
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateScopes = true;
     options.ValidateOnBuild = true;
 });
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngular", policy =>
+    policy.WithOrigins("http://localhost:4200")
+    .AllowAnyHeader()
+    .AllowAnyMethod());
+});
+
+
+//
+builder.Services.AddMediatR(cfg =>
+cfg.RegisterServicesFromAssembly(typeof(EnrollStudentHandler).Assembly));
+builder.Services.AddValidatorsFromAssembly(typeof(EnrollStudentValidator).Assembly);
+builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
+builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 builder.Services.AddOptions<PaymentOptions>()
     .BindConfiguration("Payments")
@@ -47,51 +74,139 @@ builder.Services.AddOptions<PaymentOptions>()
     .ValidateOnStart();
 builder.Services.AddControllers(options =>
 {
-options.Filters.Add<AuditLogFilter>();
+    options.Filters.Add<AuditLogFilter>();
 });
 
-builder.Services.AddControllers();
-builder.Services.AddProblemDetails();
-builder.Services.AddOpenApi();
+builder.Services.AddHybridCache(options =>
+{
+    options.DefaultEntryOptions = new HybridCacheEntryOptions
+    {
+        Expiration = TimeSpan.FromMinutes(10),
 
+        LocalCacheExpiration = TimeSpan.FromMinutes(2)
+    };
+});
+builder.Services.AddSignalR();
+//
+builder.Services.AddRateLimiter(options =>
+{
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext,
+    string>(httpContext =>
+    {
+        var (partitionKey, tier) = ApiKeyResolver.Resolve(httpContext);
+        return tier switch
+        {
+            ApiKeyTier.Paid => RateLimitPartition.GetTokenBucketLimiter
+            (partitionKey: $"paid:{partitionKey}",
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 200,
+                TokensPerPeriod = 100,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }),
+            ApiKeyTier.Free => RateLimitPartition.GetTokenBucketLimiter
+            (
+            partitionKey: $"free:{partitionKey}",
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 30,
+                TokensPerPeriod = 10,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }),
+            _ => RateLimitPartition.GetTokenBucketLimiter(
+
+partitionKey: $"anon:{partitionKey}",
+factory: _ => new TokenBucketRateLimiterOptions
+{
+    TokenLimit = 10,
+    TokensPerPeriod = 5,
+    ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+    QueueLimit = 0,
+    AutoReplenishment = true
+})
+        };
+    });
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, ct) =>
+    {
+        var retryAfter = "10";
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var ts))
+            retryAfter = ((int)ts.TotalSeconds).ToString();
+        context.HttpContext.Response.Headers.RetryAfter = retryAfter;
+        context.HttpContext.Response.ContentType = "application/problem+json";
+        await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Title = "Rate limit exceeded",
+            Detail = $"Too many requests. Retry after {retryAfter} seconds.",
+            Status = StatusCodes.Status429TooManyRequests,
+            Type = "https://tms.local/errors/rate_limit_exceeded"
+        }, ct);
+    };
+    options.AddConcurrencyLimiter("transcripts", opt =>
+    {
+        opt.PermitLimit = 5;
+        // 5 in-flight transcripts maximum
+        opt.QueueLimit = 20;
+        // queue up to 20 more
+        opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+    options.AddTokenBucketLimiter("search", opt =>
+    {
+        opt.TokenLimit = 10;
+        opt.TokensPerPeriod = 5;
+        opt.ReplenishmentPeriod = TimeSpan.FromSeconds(10);
+        opt.QueueLimit = 2;
+    });
+});
+
+builder.Services.AddHybridCache();
 //
 builder.Services.AddOpenApi("v1", options =>
 {
-options.ShouldInclude = description =>
-description.GroupName == "v1";
+    options.ShouldInclude = description =>
+    description.GroupName == "v1";
 });
 builder.Services.AddOpenApi("v2", options =>
 {
-options.ShouldInclude = description =>
-description.GroupName == "v2";
+    options.ShouldInclude = description =>
+    description.GroupName == "v2";
 });
 builder.Services.AddApiVersioning(options =>
 {
-options.DefaultApiVersion = new ApiVersion(1, 0);
-options.AssumeDefaultVersionWhenUnspecified = true;
-options.ReportApiVersions = true;
-options.ApiVersionReader = new UrlSegmentApiVersionReader();
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+    options.ApiVersionReader = new UrlSegmentApiVersionReader();
 })
 .AddApiExplorer(options =>
 {
-options.GroupNameFormat = "'v'VVV";
-options.SubstituteApiVersionInUrl = true;
+    options.GroupNameFormat = "'v'VVV";
+    options.SubstituteApiVersionInUrl = true;
 });
 // update your scalar config
 var app = builder.Build();
+app.UseExceptionHandler();
+app.UseCors("AllowAngular");
 
- app.MapScalarApiReference(options =>
+app.MapScalarApiReference(options =>
 {
-options.WithTitle("TMS API Reference")
-.WithTheme(ScalarTheme.DeepSpace)
-.WithDefaultHttpClient(ScalarTarget.CSharp,
-ScalarClient.HttpClient);
-// Tell Scalar to pull both documents into its sidebar dropdown
-options
-.AddDocument("v1", "API Version 1.0")
-.AddDocument("v2", "API Version 2.0");
+    options.WithTitle("TMS API Reference")
+     .WithTheme(ScalarTheme.DeepSpace)
+     .WithDefaultHttpClient(ScalarTarget.CSharp,
+     ScalarClient.HttpClient);
+    // Tell Scalar to pull both documents into its sidebar dropdown
+    options
+     .AddDocument("v1", "API Version 1.0")
+     .AddDocument("v2", "API Version 2.0");
 });
 
+
+//app.MapHealthChecks("/health/live").DisableRateLimiting();
+//app.MapHealthChecks("/health/ready").DisableRateLimiting();
 
 app.UseMiddleware<RequestLoggingMiddleware>();
 
@@ -101,18 +216,18 @@ app.UseStatusCodePages();
 app.UseHttpsRedirection();
 
 app.UseRouting();
-
+app.UseRateLimiter();
 app.UseAuthentication();
 
 app.UseAuthorization();
+app.MapControllers();
 app.UseMiddleware<V1DeprecationMiddleware>();
 
-app.MapControllers();
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-   // app.MapScalarApiReference();
+    // app.MapScalarApiReference();
 }
 
 app.MapGet("/api/error", () =>
@@ -150,8 +265,7 @@ new() { RegistrationNumber = "TMS-2026-0005", Name = "EvanWright", GPA = 2.5m, I
 {
 new() { Code = "CS-101", Title = "Introduction to ComputerScience", MaxCapacity = 30 },
 new() { Code = "CS-201", Title = "Data Structures and Algorithms", MaxCapacity = 25 },
-new() { Code = "MAT-101", Title = "Calculus I", MaxCapacity =
-40 }
+new() { Code = "MAT-101", Title = "Calculus I", MaxCapacity =40 }
 };
         context.Courses.AddRange(courses);
         context.SaveChanges();

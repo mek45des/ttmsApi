@@ -29,30 +29,7 @@ public class TestController(TmsDbContext context, IStudentService studentService
         return gpa >= 3.5m;
     }
 
-    [HttpGet]
-public async Task<ActionResult<IReadOnlyList<Student>>> GetStudents(
-    int page = 1,
-    CancellationToken cancellationToken = default)
-{
-    var students = await studentService.GetStudentsPageAsync(
-        page,
-        cancellationToken);
 
-        var student = await context.Students.AsNoTracking().ToListAsync(cancellationToken);
-foreach (var s in student)
-{
-// TODO: Query enrollment count for this student inside the loop (use StudentId).
-// This should produce 1 + N SQL statements. Count them in the log.
-var count = await context.Enrollments
-.AsNoTracking()
-.CountAsync(e => e.StudentId == s.Id, cancellationToken);
-Console.WriteLine($"{s.Name}: {count} enrollments");
-}
-
-    return Ok(students);
-
-    
-}
 
     [HttpGet("translation-fail")]
     public async Task<IActionResult> TestTranslationFail()

@@ -1,73 +1,71 @@
+using Asp.Versioning;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using TmsApi.Application.Dtos;
-
-//using TmsApi.Services;
+using TmsApi.Application.Enrollments.Commands;
+using TmsApi.Application.Enrollments.Queries;
 namespace TmsApi.Api.Controllers;
-using TmsApi.Domain.Entities;
+
+using TmsApi.Api.Hubs;
+using Microsoft.AspNetCore.SignalR;
+using TmsApi.Application.Hubs;
+using TmsApi.Application.Dtos;
 using TmsApi.Application.Interface;
 [ApiController]
-[Route("api/courses/{courseId:int}/enrollments")]
-[Tags("Enrollments")]
-[Produces("application/json")]
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
-public class EnrollmentsController(ICourseService courseService,IEnrollmentService enrollmentService) : ControllerBase
+[Route("api/enrollments")]
+[ApiVersion("2.0")]
+//[ApiVersion("1.0")]
+public class EnrollmentsController(IMediator mediator, IEnrollmentService enrollmentService, IHubContext<TmsHub, ITmsHubClient> hubContext) : ControllerBase
 {
-// GET /api/enrollments returns all enrollment records
-[HttpGet("{id:int}", Name = nameof(GetEnrollment))]
-[ProducesResponseType(typeof(EnrollmentResponseDto), StatusCodes.Status200OK)]
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-[EndpointSummary("Get one enrolment for a course")]
-public async Task<IActionResult> GetEnrollment(int courseId, int id, CancellationToken cancellationToken)
-{
-var enrollment = await enrollmentService.GetByIdAsync(courseId, id, cancellationToken);
-return enrollment is not null ? Ok(enrollment) : NotFound();
-}
-[HttpPost]
-[ProducesResponseType(typeof(EnrollmentResponseDto), StatusCodes.Status201Created)]
-[ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.
-Status400BadRequest)]
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
-[EndpointSummary("Enrol a student in a course")]
-[EndpointDescription("Returns 404 if the course does not exist, 409if the course has reached MaxCapacity.")]
-public async Task<IActionResult> EnrollStudent(int courseId, EnrollStudentRequest request, CancellationToken cancellationToken){
-    var course = await courseService.GetByIdAsync(courseId, cancellationToken);
-
-    if (course==  null)
+    [HttpPost]
+    public async Task<IActionResult> Enroll(
+    EnrollStudentCommand command, CancellationToken ct)
     {
-        return NotFound();
+        var result = await mediator.Send(command, ct);
+        return result.Match<IActionResult>(
+        onSuccess: created => CreatedAtAction(
+        nameof(GetSchedule),
+        new { studentId = created.StudentId },
+        created),
+        onFailure: error =>
+        {
+            var status = error.Code switch
+            {
+                "course_not_found" => StatusCodes.Status404NotFound,
+                "course_full" or "already_enrolled" => StatusCodes.
+        Status409Conflict,
+                _ => StatusCodes.Status400BadRequest
+            };
+            return Problem(
+    statusCode: status,
+    title: "Enrollment rejected",
+    detail: error.Message,
+    type: $"https://tms.local/errors/{error.Code}");
+        });
+
     }
-   var enrollment = await enrollmentService.CreateAsync(courseId, request, cancellationToken);
-    if(course.EnrollmentCount >= course.MaxCapacity)
-        {
-            return Conflict(new ProblemDetails { 
-                Title = "Course is full",
-                Detail = $"Course '{course.Title}' has reached its maximum capacity of {course.MaxCapacity}.",
-                Status = StatusCodes.Status409Conflict });
-        }
-        else
-        {
-           
-            return CreatedAtAction(nameof(GetEnrollment),
-            new { courseId, id = enrollment.Id }, enrollment);
-            throw new NotImplementedException();
-        }
-}
-  [HttpGet(Name = "ListCourseEnrollments")]
-  [ProducesResponseType(typeof(IReadOnlyList<EnrollmentResponseDto>),
-StatusCodes.Status200OK)]
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-[EndpointSummary("List enrolments for a course")]
-public async Task<IActionResult> GetEnrollments(int courseId, CancellationToken ct)
-{
-var course = await courseService.GetByIdAsync(courseId, ct);
-if (course == null)
-{
-    return NotFound();
-}
-return Ok(await enrollmentService.GetByCourseAsync(courseId, ct));
-throw new NotImplementedException();
+
+    [HttpGet("{studentId}/schedule")]
+    public async Task<IActionResult> GetSchedule(
+    int studentId, CancellationToken ct)
+    {
+        var schedule = await mediator.Send(
+        new GetStudentScheduleQuery(studentId), ct);
+        return Ok(schedule);
+    }
+    [HttpGet]
+    [ProducesResponseType(typeof(PagedResponse<EnrollmentResponseDto>), StatusCodes.Status200OK)]
+    [EndpointSummary("List enrollments with pagination")]
+    [EndpointDescription("Returns a paginated, optionally filtered list of TMS enrollments. Page size is capped at 50.")]
+    public async Task<IActionResult> GetEnrollments(
+  [FromQuery] PagedRequest request, CancellationToken ct)
+    {
+        var result = await enrollmentService.GetEnrollmentsAsync(request, ct);
+        return Ok(result);
+    }
+
+   
+    // Your existing approval logic ...
+    // After the database commit succeeds, broadcast to all connected Angular clients
 }
 
-}
 

@@ -1,65 +1,62 @@
 using Asp.Versioning;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using TmsApi.Infrastructure.Persistence;
 namespace TmsApi.Api.Controllers.V2;
-
+using TmsApi.Application.Enrollments.Commands;
+using TmsApi.Application.Enrollments.Queries;
 
 [ApiController]
-[Route("api/v{version:apiVersion}/courses")]
+[Route("api/v{version:apiVersion}/enrollments")]
 [ApiVersion("2.0")]
-public class CoursesController(TmsDbContext context) : ControllerBase
+public class EnrollmentsController(IMediator mediator) : ControllerBase
 {
-    [HttpGet]
-    public async Task<IActionResult> GetCourses(
-    [FromQuery] int page = 1,
-    [FromQuery] int pageSize = 20,
-    CancellationToken ct = default)
+    [HttpPost]
+    public async Task<IActionResult> Enroll(
+        EnrollStudentCommand command,
+        CancellationToken ct)
     {
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, 50);
-        var baseQuery = context.Courses.AsNoTracking();
-        var totalCount = await baseQuery.CountAsync(ct);
-        var rows = await baseQuery
-        .OrderBy(c => c.Title)
-        .Skip((page - 1) * pageSize)
-        .Take(pageSize)
-        .Select(c => new
-        {
-            c.Id,
-            c.Title,
-            c.Code,
-            c.MaxCapacity,
-            EnrollmentCount = c.Enrollments.Count
-        })
-        .ToListAsync(ct);
-        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-        var hasNext = page < totalPages;
-        var hasPrevious = page > 1;
-        return Ok(new
-        {
-            data = rows,
-            meta = new
-            {
-                totalCount,
-                page,
-                pageSize,
-                totalPages,
-                hasNext,
-                hasPrevious
-            },
-            links = new
-            {
-                self = $"/api/v2/courses?page={page}&pageSize={pageSize}",
-                next = hasNext
-        ? $"/api/v2/courses?page={page + 1}&pageSize={pageSize}"
-        : (string?)null,
-                prev = hasPrevious
-        ? $"/api/v2/courses?page={page - 1}&pageSize={pageSize}"
+        var result = await mediator.Send(command, ct);
 
-        : (string?)null,
-                enroll = "/api/v2/enrollments"
-            }
-        });
+        return result.Match<IActionResult>(
+            onSuccess: created => CreatedAtAction(
+                nameof(GetSchedule),
+                new { studentId = created.StudentId },
+                created),
+
+            onFailure: error =>
+            {
+                var status = error.Code switch
+                {
+                    "course_not_found" =>
+                        StatusCodes.Status404NotFound,
+
+                    "course_full" or "already_enrolled" =>
+                        StatusCodes.Status409Conflict,
+
+                    _ =>
+                        StatusCodes.Status400BadRequest
+                };
+
+                return Problem(
+                    statusCode: status,
+                    title: "Enrollment rejected",
+                    detail: error.Message,
+                    type: $"https://tms.local/errors/{error.Code}");
+            });
+    }
+
+    [HttpGet("{studentId}/schedule")]
+    public async Task<IActionResult> GetSchedule(
+        int studentId,
+        CancellationToken ct)
+    {
+        var schedule = await mediator.Send(
+            new GetStudentScheduleQuery(studentId),
+            ct);
+
+        return Ok(schedule);
     }
 }
