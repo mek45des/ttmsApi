@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TmsApi.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using TmsApi.Infrastructure.Persistence;
 namespace TmsApi.Migrations
 {
     [DbContext(typeof(TmsDbContext))]
-    partial class TmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260818075444_AddEnrollmentStatus")]
+    partial class AddEnrollmentStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -116,28 +119,6 @@ namespace TmsApi.Migrations
                     b.HasIndex("StudentId");
 
                     b.ToTable("Enrollments", (string)null);
-                });
-
-            modelBuilder.Entity("TmsApi.Domain.Entities.GradePayLoad", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CourseId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Score")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("StudentId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("GradePayLoads");
                 });
 
             modelBuilder.Entity("TmsApi.Domain.Entities.Student", b =>

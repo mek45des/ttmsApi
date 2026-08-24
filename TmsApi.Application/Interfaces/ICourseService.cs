@@ -12,4 +12,8 @@ Task<CourseResponseDto> CreateAsync(CreateCourseRequest request, CancellationTok
 Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken);
 Task<PagedResponse<CourseResponseDto>> GetCoursesAsync(PagedRequest
 request, CancellationToken ct);
+//Task<Course>GetByCodeAsync(string courseCode, CancellationToken ct);
+ Task<Course?> GetByCodeAsync(string courseCode, CancellationToken ct);
+
+    Task<List<Course>> GetAllAsync(CancellationToken ct);
 }

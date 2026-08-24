@@ -1,40 +1,42 @@
 using Microsoft.EntityFrameworkCore;
-using  TmsApi.Application.Dtos;
+using TmsApi.Application.Dtos;
 using TmsApi.Infrastructure.Persistence;
 using TmsApi.Domain.Entities;
 namespace TmsApi.Infrastructure.Services;
+
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using TmsApi.Application.Interface;
 public class CourseService(TmsDbContext context, ILogger<CourseService>
-logger): ICourseService
+logger) : ICourseService
 {
-    public   Task<CourseResponseDto?> GetByIdAsync(int id,
+    public Task<CourseResponseDto?> GetByIdAsync(int id,
         CancellationToken cancellationToken)
     {
-       return context.Courses
-.AsNoTracking()
-.Where(c => c.Id == id)
-.Select(c => new CourseResponseDto(
-c.Id, c.Code, c.Title, c.MaxCapacity, c.Enrollments.Count))
-.FirstOrDefaultAsync(cancellationToken);
+        return context.Courses
+ .AsNoTracking()
+ .Where(c => c.Id == id)
+ .Select(c => new CourseResponseDto(
+ c.Id, c.Code, c.Title, c.MaxCapacity, c.Enrollments.Count))
+ .FirstOrDefaultAsync(cancellationToken);
     }
-public async Task<CourseResponseDto> CreateAsync(
-    CreateCourseRequest request,
-    CancellationToken cancellationToken)
-{
-   var course = new Course
-{
-Code = request.Code,
-Title = request.Title,
-MaxCapacity = request.MaxCapacity
-};
-context.Courses.Add(course);
-await context.SaveChangesAsync(cancellationToken);
-logger.LogInformation("Created course {CourseId} ({Code})", course.
-Id, course.Code);
-return (await GetByIdAsync(course.Id, cancellationToken))!;
-}
-public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken)
+    public async Task<CourseResponseDto> CreateAsync(
+        CreateCourseRequest request,
+        CancellationToken cancellationToken)
+    {
+        var course = new Course
+        {
+            Code = request.Code,
+            Title = request.Title,
+            MaxCapacity = request.MaxCapacity
+        };
+        context.Courses.Add(course);
+        await context.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("Created course {CourseId} ({Code})", course.
+        Id, course.Code);
+        return (await GetByIdAsync(course.Id, cancellationToken))!;
+    }
+    public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken)
     {
         return context.Courses.AsNoTracking().AnyAsync(c => c.Code == code, cancellationToken);
     }
@@ -42,24 +44,41 @@ public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationTok
         PagedRequest request, CancellationToken ct)
     {
         IQueryable<Course> query = context.Courses.AsNoTracking();
-        if(request.Search is not null)
+        if (request.Search is not null)
         {
-           query = query.Where(c => EF.Functions.ILike(c.Title, $"%{request.Search}%")
-            || EF.Functions.ILike(c.Code, $"%{request.Search}%"));
+            query = query.Where(c => EF.Functions.ILike(c.Title, $"%{request.Search}%")
+             || EF.Functions.ILike(c.Code, $"%{request.Search}%"));
         }
-            var totalCount = await query.CountAsync(ct);
-            var items = await query
-                .OrderBy(c => c.Title)
-                .Skip((request.Page - 1) * request.PageSize)
-                .Take(request.PageSize)
-                .Select(c => new CourseResponseDto(
-                    c.Id, c.Code, c.Title, c.MaxCapacity, c.Enrollments.Count))
-                .ToListAsync(ct);
-                
-               
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .OrderBy(c => c.Title)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .Select(c => new CourseResponseDto(
+                c.Id, c.Code, c.Title, c.MaxCapacity, c.Enrollments.Count))
+            .ToListAsync(ct);
 
-               return new PagedResponse<CourseResponseDto> { Items = items, TotalCount = totalCount, 
-                Page = request.Page, PageSize = request.PageSize };
-                throw new NotImplementedException();
-        }
+
+
+        return new PagedResponse<CourseResponseDto>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = request.Page,
+            PageSize = request.PageSize
+        };
+        //throw new NotImplementedException();
     }
+    public async Task<Course?>GetByCodeAsync( string courseCode, CancellationToken ct)
+    {
+        return await context.Courses
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.Code == courseCode, ct);
+    }
+ public async Task<List<Course>> GetAllAsync(CancellationToken ct)
+{
+    return await context.Courses
+        .Include(c => c.Enrollments)
+        .ToListAsync(ct);
+}
+}

@@ -8,6 +8,7 @@ public DbSet<Student> Students => Set<Student>();
 public DbSet<Certificate> Certificates => Set<Certificate>();
 public DbSet<Course> Courses => Set<Course>(); 
 public DbSet<Enrollment> Enrollments => Set<Enrollment>();
+public DbSet<GradePayLoad> GradePayLoads => Set<GradePayLoad>();
 protected override void OnModelCreating(ModelBuilder modelBuilder)
 {
     modelBuilder.ApplyConfigurationsFromAssembly(typeof(TmsDbContext).Assembly);
