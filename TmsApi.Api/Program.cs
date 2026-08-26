@@ -21,7 +21,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using TmsApi.Api.RateLimiting;
-
+using Microsoft.AspNetCore.Antiforgery;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
@@ -43,7 +43,7 @@ builder.Services.AddSingleton<EnrollmentWorker>();
 builder.Services.AddScoped<IStudentService, StudentService>();
 builder.Services.AddScoped<ICourseService, CourseService>();
 builder.Services.AddScoped<ICachedCourseService, CachedCourseService>();
-builder.Services.AddScoped<IGradeService,GradeService>();
+builder.Services.AddScoped<IGradeService, GradeService>();
 
 builder.Host.UseDefaultServiceProvider(options =>
 {
@@ -162,8 +162,10 @@ factory: _ => new TokenBucketRateLimiterOptions
         opt.QueueLimit = 2;
     });
 });
+builder.Services.AddProblemDetails();
 
 builder.Services.AddHybridCache();
+
 //
 builder.Services.AddOpenApi("v1", options =>
 {
@@ -174,6 +176,11 @@ builder.Services.AddOpenApi("v2", options =>
 {
     options.ShouldInclude = description =>
     description.GroupName == "v2";
+});
+//
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-XSRF-TOKEN";
 });
 builder.Services.AddApiVersioning(options =>
 {
@@ -187,11 +194,28 @@ builder.Services.AddApiVersioning(options =>
     options.GroupNameFormat = "'v'VVV";
     options.SubstituteApiVersionInUrl = true;
 });
+//Load allowed origins from appsettings.Development.json
+var allowedOrigins = builder.Configuration
+.GetSection("AllowedOrigins").Get<string[]>()
+?? ["http://localhost:4200"];
+// Register the CORS policy in the Dependency Injection container
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("TmsClient", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .AllowCredentials() // Vital for HttpOnly auth cookies in Session 2
+    .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
+    });
+});
+
 // update your scalar config
 var app = builder.Build();
 app.UseExceptionHandler();
-app.UseCors("AllowAngular");
-
+//app.UseCors("AllowAngular");
+app.UseStatusCodePages();
 app.MapScalarApiReference(options =>
 {
     options.WithTitle("TMS API Reference")
@@ -215,14 +239,36 @@ app.UseStatusCodePages();
 
 app.UseHttpsRedirection();
 
-app.UseRouting();
 app.UseRateLimiter();
+app.UseRouting();
+// CRITICAL: Middleware order matters!
+// UseRouting -> UseCors -> UseAuthentication -> UseAuthorization
+app.UseCors("TmsClient");
+
 app.UseAuthentication();
 
 app.UseAuthorization();
 app.MapControllers();
 app.UseMiddleware<V1DeprecationMiddleware>();
 
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true || context.
+    Request.Cookies.ContainsKey("tms_auth"))
+    {
+        var antiforgery = context.RequestServices
+        .GetRequiredService<IAntiforgery>();
+        var tokens = antiforgery.GetAndStoreTokens(context);
+        context.Response.Cookies.Append("XSRF-TOKEN", tokens.RequestToken!,
+        new CookieOptions
+        {
+            HttpOnly = false, // MUST be false so Angular JavaScript can read it!
+            Secure = !builder.Environment.IsDevelopment(),
+            SameSite = SameSiteMode.Strict
+        });
+    }
+    await next(context);
+});
 
 if (app.Environment.IsDevelopment())
 {
