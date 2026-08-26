@@ -22,6 +22,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using TmsApi.Api.RateLimiting;
 using Microsoft.AspNetCore.Antiforgery;
+using TmsApi.Api.Hubs;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
@@ -87,6 +88,7 @@ builder.Services.AddHybridCache(options =>
     };
 });
 builder.Services.AddSignalR();
+
 //
 builder.Services.AddRateLimiter(options =>
 {
@@ -244,7 +246,7 @@ app.UseRouting();
 // CRITICAL: Middleware order matters!
 // UseRouting -> UseCors -> UseAuthentication -> UseAuthorization
 app.UseCors("TmsClient");
-
+app.MapHub<TmsHub>("/hubs/tms").RequireCors("TmsClient");
 app.UseAuthentication();
 
 app.UseAuthorization();
