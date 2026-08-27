@@ -23,6 +23,11 @@ using Microsoft.AspNetCore.RateLimiting;
 using TmsApi.Api.RateLimiting;
 using Microsoft.AspNetCore.Antiforgery;
 using TmsApi.Api.Hubs;
+using Microsoft.AspNetCore.Identity;
+using TmsApi.Infrastructure.Identity;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
@@ -38,6 +43,21 @@ options.UseNpgsql(builder.Configuration.GetConnectionString("TmsDatabase"))
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
 options.UseNpgsql(builder.Configuration.GetConnectionString("TmsDatabase")));
+
+builder.Services.AddIdentityCore<TmsUser>(options =>
+{
+    // Enterprise Password Policy
+    options.Password.RequiredLength = 12;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireDigit = true;
+    options.Password.RequireNonAlphanumeric = true;
+    // Brute-Force Lockout Protection
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+    options.Lockout.AllowedForNewUsers = true;
+})
+.AddRoles<IdentityRole>()
+.AddEntityFrameworkStores<TmsDbContext>();
 
 builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
 builder.Services.AddSingleton<EnrollmentWorker>();
@@ -59,6 +79,26 @@ builder.Services.AddCors(options =>
     .AllowAnyMethod());
 });
 
+builder.Services.AddScoped<TokenService>();
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(
+    Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+    };
+});
 
 //
 builder.Services.AddMediatR(cfg =>
@@ -252,6 +292,15 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.UseMiddleware<V1DeprecationMiddleware>();
+var service = new CryptoDemoService();
+string hash1 = service.HashUserPassword("Password123!");
+string hash2 = service.HashUserPassword("Password123!");
+// hash1 and hash2 are completely different strings because of unique random salts!
+Console.WriteLine($"Hash 1: {hash1}");
+Console.WriteLine($"Hash 2: {hash2}");
+// Both verify to true against the same plain text:
+bool match1 = service.VerifyUserPassword("Password123!", hash1);// true
+bool match2 = service.VerifyUserPassword("Password123!", hash2);// true
 
 app.Use(async (context, next) =>
 {
